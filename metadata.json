@@ -1,0 +1,15 @@
+{
+  "name": "samuraiii-alice_xrootd",
+  "version": "0.9.0",
+  "author": "Martin Adam, Alexandr Mikula",
+  "summary": "Xrootd ALICE configuration",
+  "license": "MIT",
+  "source": "https://github.com/samuraiii/alice_xrootd",
+  "project_page": "https://github.com/samuraiii/alice_xrootd",
+  "issues_url": "https://github.com/samuraiii/alice_xrootd/issues",
+  "dependencies": [
+    {"name":"puppetlabs-stdlib","version_requirement":">= 1.0.0 < 8.0.0"},
+    {"name":"fiddyspence-sysctl","version_requirement":">= 1.0.0"}
+  ]
+}
+

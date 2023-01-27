@@ -1,0 +1,62 @@
+set myName = <%= scope['alice_xrootd::se_name'] %>
+set myRedirector = <%= scope['alice_xrootd::manager_hostname'] %>
+set portXRDman = <%= scope['alice_xrootd::xrd_manager_port'] %>
+set portXRDsrv = <%= scope['alice_xrootd::xrd_server_port'] %>
+set portCMSD   = <%= scope['alice_xrootd::cms_port'] %>
+
+oss.defaults nocheck nodread nomig nomkeep nomlock nommap nopurge norcreate nostage xattrs
+oss.alloc 0 0 0
+
+all.export / nolock <% if scope['alice_xrootd::readonly'] %>notwritable<% else %>writable<% end %>
+all.sitename $myName
+all.manager $myRedirector $portCMSD
+all.adminpath <%= scope['alice_xrootd::xrd_rundir'] %>/admin/
+all.pidpath <%= scope['alice_xrootd::xrd_rundir'] %>/admin/
+
+if exec xrootd
+    xrd.protocol http /usr/lib64/libXrdHttp.so
+
+    # Enable third-party-copy
+    http.exthandler xrdtpc /usr/lib64/libXrdHttpTPC.so
+
+    # Pass the bearer token to the Xrootd authorization framework.
+    http.header2cgi Authorization authz
+
+    http.listingdeny yes
+fi
+
+
+xrd.protocol xroot *
+xrd.network buffsz 0 nodnr nokeepalive
+xrd.timeout hail 30 kill 10 read 20 idle 60
+xrd.sched mint 8 avlt 8 idle 120s maxt 1024
+
+xrootd.async off
+xrootd.monitor all flush 60s window 30s dest files info user <%= scope['alice_xrootd::monalisa_host'] %>:9930
+xrootd.chksum max 2 md5
+
+ofs.trace -all
+ofs.tpc autorm xfr 20 pgm /usr/bin/xrdcp -f
+
+cms.space recalc 120 min 50g 30g
+
+<% if scope['alice_xrootd::is_manager'] -%>
+all.role manager
+xrd.port $portXRDman
+cms.ping 30 log 3 usage 10
+cms.delay delnode 20m drop 5m hold 500 lookup 15 overload 5 qdl 15 servers 1 startup 10
+cms.sched cpu 50 io 50 space 30
+<% else -%>
+all.role server
+xrd.port $portXRDsrv
+oss.cachescan 300
+xrootd.seclib /usr/lib64/libXrdSec.so
+sec.protocol /usr/lib64 unix
+ofs.authorize
+ofs.authlib /usr/lib64/<%= scope['alice_xrootd::acc_lib'] %>
+oss.namelib /usr/lib64/libXrdAggregatingName2Name.so /
+oss.localroot <%= scope['alice_xrootd::namespace_root'] %>
+<% scope["alice_xrootd::xrd_data_dirs"].each do |fs| -%>
+oss.space public <%= fs %>
+<% end -%>
+<% end -%>

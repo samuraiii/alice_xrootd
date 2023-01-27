@@ -1,0 +1,316 @@
+#!/usr/bin/perl -w
+
+##############################################################################
+#
+# NAME :        glite-info-se-xrootd
+#
+# DESCRIPTION : gip provider for pure xrootd storages
+#
+# AUTHORS :     Claudiu Schiaua <schiaua@ifin.nipne.ro>
+#
+# LICENSE : GPL v2
+#
+##############################################################################
+
+use strict;
+use POSIX;
+use Getopt::Long;
+
+# file to hold the xrd query i command output cache
+# ".<hostname>.<port>" is automatically added to the filename
+my $xrdicachebase="/tmp/glite-info-se-xrootd.icache.$<";
+# file to hold the xrd queryspace command output cache
+# ".<hostname>.<port>" is automatically added to the filename
+my $xrdscachebase="/tmp/glite-info-se-xrootd.scache.$<";
+
+# options to be used for xrd command
+my $xrdopts="-DIDebugLevel -1 -DIConnectTimeout 2 -DIRequestTimeout 10 -DIFirstConnectMaxCnt 2";
+
+# Print the usage message
+sub usage(){
+    print STDERR "Usage: $0 --vo <VO list> --site <site name> --proto <version> --sec <protocol> --host <redirector host> [--port <redirector port>] [--xrd <cmd>] [--name <name>]";
+    print STDERR '
+
+se-xrootd information provider.
+
+Options:
+
+    -?|--help  displays this helpful message.
+
+    -s|--site <site name> site name.
+
+    -v|--vo <vos> comma-separated list of VOs.
+
+    -a|--path <string> comma-separated list of paths to be published in VOInfoPath.
+			The number of paths should match the number of VOs.
+			Defaults to "/" for each VO.
+
+    -r|--proto <version> the xrootd protocol version to report.
+
+    -e|--sec <protocol> the security protocol to report. Should be tkauthz or GSI.
+
+    -h|--host <host> redirector host.
+
+    -p|--port <port> redirector port (default 1094).
+
+    -x|--xrd <cmd> xrd command to use (default "/usr/bin/xrd").
+
+    -n|--name <name> the string to use for name (default "<site name> xroot://<host>:<port>").
+
+';
+    exit 1;
+}
+
+# Parse the command line options
+my %opt = (
+    site => '',
+    help => '',
+    host => '',
+    port => 1094,
+    vo => '',
+    xrd => '/usr/bin/xrd',
+    name => '',
+    proto => '',
+    path => '',
+    sec => ''
+);
+GetOptions(\%opt, 'site|s=s', 'help|?', 'host|h=s', 'port|p=i', 'vo|v=s', 'xrd|x=s', 'proto|r=s', 'sec|e=s', 'name|n=s', 'path|a=s') or usage();
+
+if ($opt{'help'})
+{
+    usage();
+    exit 0;
+}
+
+if ( ( ! $opt{'site'} ) || ( ! $opt{'host'} ) || ( ! $opt{'vo'} ) || ( ! $opt{'proto'} ) || ( ! $opt{'sec'} ) )
+{
+    usage();
+    exit 1;
+}
+
+if ( ( $opt{'port'} <= 0 ) || ( $opt{'port'} >= 65536 ) )
+{
+    print STDERR 'Invalid port specification!
+';
+    exit 1;
+}
+
+my $fh;
+my $xrdicache="$xrdicachebase.$opt{'host'}.$opt{'port'}";
+my $out=`$opt{'xrd'} $opt{'host'}:$opt{'port'} $xrdopts query 1 i 2>/dev/null`;
+if ( $? != 0 )
+{
+    if ( -f "$xrdicache" )
+    {
+	$out=`cat "$xrdicache"`;
+    }
+    else
+    {
+	print STDERR "command $opt{'xrd'} failed and no cache is available!\n";
+	exit 1;
+    }
+}
+else
+{
+    if ( open( $fh,"> $xrdicache") )
+    {
+	print {$fh} "$out";
+	close $fh;
+    }
+}
+
+my $xrdver=$out;
+$xrdver =~ s/.*ver=\"//;
+$xrdver =~ s/\".*//s;
+
+# print "|$xrdver|\n";
+
+my $xrdscache="$xrdscachebase.$opt{'host'}.$opt{'port'}";
+$out=`$opt{'xrd'} $opt{'host'}:$opt{'port'} $xrdopts queryspace / 2>/dev/null`;
+if ( $? != 0 )
+{
+    if ( -f "$xrdscache" )
+    {
+	$out=`cat "$xrdscache"`;
+    }
+    else
+    {
+	print STDERR "command $opt{'xrd'} failed and no cache is available!\n";
+	exit 1;
+    }
+}
+else
+{
+    if ( open( $fh,"> $xrdscache") )
+    {
+	print {$fh} "$out";
+	close $fh;
+    }
+}
+
+#print "|$out|\n";
+
+my $total_mib = $out;
+$total_mib =~ s/.*Total[ ]*:[ ]*//s;
+$total_mib =~ s/\n.*//s;
+my $total_kb=floor($total_mib*1048.576);
+my $total=floor($total_kb/1000000);
+
+my $free_mib = $out;
+$free_mib =~ s/.*Free[ ]*:[ ]*//s;
+$free_mib =~ s/\n.*//s;
+my $free_kb=floor($free_mib*1048.576);
+my $free=floor($free_kb/1000000);
+
+my $used_mib = $total_mib - $free_mib;
+my $used = $total - $free;
+my $used_kb = $total_kb - $free_kb;
+
+#print "total_mib=$total_mib\nused_mib=$used_mib\nfree_mib=$free_mib\n";
+#print "total=$total\nused=$used\nfree=$free\n";
+
+my $x_url="xroot://$opt{'host'}:$opt{'port'}/";
+
+my $se_unique_id="$opt{'host'}";
+my $sa_unique_id="xroot:SA";
+
+
+if ( ! $opt{'name'} )
+{
+    $opt{'name'}="$opt{'site'} $se_unique_id";
+}
+
+my @vos=split(/,/,"$opt{'vo'}");
+my %path;
+my $vo;
+
+if ( ! $opt{'path'} )
+{
+    for $vo (@vos)
+    {
+	$path{"$vo"}="/";
+    }
+}
+else
+{
+    my @pa;
+    @pa=split(/,/,"$opt{'path'}");
+    my $i=0;
+    for $vo (@vos)
+    {
+	$path{"$vo"}=$pa[$i];
+	$i++;
+    }
+}
+
+#for $vo (@vos)
+#{
+#    print "$path{$vo}\n";
+#}
+
+print "dn: GlueSEUniqueID=$se_unique_id,mds-vo-name=resource,o=grid
+objectClass: GlueTop
+objectClass: GlueSE
+objectClass: GlueKey
+objectClass: GlueSchemaVersion
+GlueSEUniqueID: $se_unique_id
+GlueSEName: $opt{'name'}
+GlueSEArchitecture: multidisk
+GlueSEImplementationName: xrootd
+GlueSEImplementationVersion: $xrdver
+GlueSEStatus: Production
+GlueSETotalOnlineSize: $total
+GlueSEUsedOnlineSize: $used
+GlueSESizeTotal: $total
+GlueSESizeFree: $free
+GlueSETotalNearlineSize: 0
+GlueSEUsedNearlineSize: 0
+GlueForeignKey: GlueSiteUniqueID=$opt{'site'}
+GlueSchemaVersionMajor: 1
+GlueSchemaVersionMinor: 3
+
+dn: GlueSEAccessProtocolLocalID=access:xroot,GlueSEUniqueID=$se_unique_id,mds-vo-name=resource,o=grid
+objectClass: GlueTop
+objectClass: GlueSEAccessProtocol
+objectClass: GlueKey
+objectClass: GlueSchemaVersion
+GlueSEAccessProtocolLocalID: access:xroot
+GlueSEAccessProtocolType: xroot
+GlueSEAccessProtocolVersion: $opt{'proto'}
+GlueSEAccessProtocolSupportedSecurity: $opt{'sec'}
+GlueChunkKey: GlueSEUniqueID=$se_unique_id
+GlueSchemaVersionMajor: 1
+GlueSchemaVersionMinor: 3
+
+dn: GlueSEControlProtocolLocalID=control:xroot,GlueSEUniqueID=$se_unique_id,mds-vo-name=resource,o=grid
+objectClass: GlueTop
+objectClass: GlueSEControlProtocol
+objectClass: GlueKey
+objectClass: GlueSchemaVersion
+GlueSEControlProtocolLocalID: control:xroot
+GlueSEControlProtocolType: xroot
+GlueSEControlProtocolEndpoint: $x_url
+GlueSEControlProtocolVersion: $opt{'proto'}
+GlueChunkKey: GlueSEUniqueID=$se_unique_id
+GlueSchemaVersionMajor: 1
+GlueSchemaVersionMinor: 3
+
+dn: GlueSALocalID=$sa_unique_id,GlueSEUniqueID=$se_unique_id,mds-vo-name=resource,o=grid
+objectClass: GlueSATop
+objectClass: GlueSA
+objectClass: GlueSAPolicy
+objectClass: GlueSAState
+objectClass: GlueSAAccessControlBase
+objectClass: GlueKey
+objectClass: GlueSchemaVersion
+GlueSALocalID: $sa_unique_id
+GlueSAName: Unreserved space for VO(s) $opt{'vo'}
+GlueSATotalOnlineSize: $total
+GlueSAUsedOnlineSize: $used
+GlueSAFreeOnlineSize: $free
+GlueSAReservedOnlineSize: 0
+GlueSACapability: InstalledOnlineCapacity=$total
+GlueSACapability: InstalledNearlineCapacity=0
+GlueSATotalNearlineSize: 0
+GlueSAUsedNearlineSize: 0
+GlueSAFreeNearlineSize: 0
+GlueSAReservedNearlineSize: 0
+GlueSARetentionPolicy: Replica
+GlueSAAccessLatency: Online
+GlueSAExpirationMode: neverExpire
+GlueSAPolicyFileLifeTime: Permanent
+GlueSAType: permanent
+GlueSAStateAvailableSpace: $free_kb
+GlueSAStateUsedSpace: $used_kb
+";
+for $vo (@vos)
+{
+    print "GlueSAAccessControlBaseRule: VO:$vo\n";
+}
+print "GlueChunkKey: GlueSEUniqueID=$se_unique_id
+GlueSchemaVersionMajor: 1
+GlueSchemaVersionMinor: 3
+";
+
+for $vo (@vos)
+{
+print "
+dn: GlueVOInfoLocalID=xroot:VOID:$vo,GlueSALocalID=$sa_unique_id,GlueSEUniqueID=$se_unique_id,mds-vo-name=resource,o=grid
+objectClass: GlueSATop
+objectClass: GlueVOInfo
+objectClass: GlueKey
+objectClass: GlueSchemaVersion
+GlueVOInfoLocalID: xroot:VOID:$vo
+GlueVOInfoName: $vo:xroot
+GlueVOInfoPath: $path{$vo}
+GlueVOInfoAccessControlBaseRule: VO:$vo
+GlueChunkKey: GlueSALocalID=$sa_unique_id
+GlueChunkKey: GlueSEUniqueID=$se_unique_id
+GlueSchemaVersionMajor: 1
+GlueSchemaVersionMinor: 3
+";
+}
+
+print "
+
+";

@@ -1,0 +1,19 @@
+[Unit]
+AssertPathExists=<%= scope['alice_xrootd::xrd_conf_file'] %>
+After=cmsd@%i.service
+BindsTo=cmsd@%i.service
+Wants=network-online.target
+After=network.target network-online.target
+
+[Service]
+User=<%= scope['alice_xrootd::user_name'] %>
+Group=<%= scope['alice_xrootd::group_name'] %>
+WorkingDirectory=<%= scope['alice_xrootd::xrd_rundir'] %>
+Restart=always
+RestartSec=20
+
+ExecStart=
+ExecStart=/bin/xrootd -k fifo -l /var/log/xrootd/xrootd.log -s <%= scope['alice_xrootd::xrd_rundir'] %>/xrootd-%i.pid -c <%= scope['alice_xrootd::xrd_conf_file'] %> -n %i <%= scope['alice_xrootd::xrootd_custom_cli_params'] %>
+
+[Install]
+WantedBy=multi-user.target
